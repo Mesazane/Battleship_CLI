@@ -11,11 +11,11 @@ deserialization, manage network connections, and handle game state synchronizati
 <table>
   <tr>
     <td>Name</td>
-    <td>..........</td>
+    <td>Muhammad Farrel Fathin Wibowo</td>
   </tr>
   <tr>
     <td>NRP</td>
-    <td>..........</td>
+    <td>5025231233</td>
   </tr>
 </table> 
 
