@@ -20,7 +20,11 @@ deserialization, manage network connections, and handle game state synchronizati
 </table> 
 
 ## **🚀 How to Run**
-_Describe how to run your game here_
+1. Run ```python server.py```
+2. in other terminals, run ```python client.py --name "Player x"```
+  (replace "x" with player number)
+3. Play it!
+
 
 <br>
 
