@@ -20,11 +20,19 @@ deserialization, manage network connections, and handle game state synchronizati
 </table> 
 
 ## **🚀 How to Run**
-1. Run ```python server.py```
-2. in other terminals, run ```python client.py --name "Player x"```
-  (replace "x" with player number)
-3. Play it!
-
+1. Set environment variables untuk email notifikasi:
+    ```bash
+    export BS_EMAIL=you@example.com
+    export BS_EMAIL_PASS=your_app_password
+    export BS_NOTIFY_TO=notify@example.com
+    ```
+2. ```bash
+    python3 server.py
+    ```
+3. Jalankan dua client di terminal terpisah:
+    ```bash
+    python3 client.py
+    ```
 
 <br>
 
