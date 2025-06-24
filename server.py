@@ -92,6 +92,7 @@ def game_thread(p1: dict, p2: dict):
         except Exception as e:
             print(f"Error sending READY to {p['name']}: {e}")
             return
+
     turn = 0
     try:
         while True:
@@ -104,24 +105,48 @@ def game_thread(p1: dict, p2: dict):
                 raise ProtocolError('Expected FIRE')
             r, c = map(int, coord.split(','))
             hit = (r, c) in defender['ships']
+
             if hit:
                 defender['ships'].remove((r, c))
                 attacker['conn'].sendall(pack_message('HIT', coord))
                 defender['conn'].sendall(pack_message('INCOMING_HIT', coord))
+
+                # Jika permainan berakhir
                 if not defender['ships']:
-                    attacker['conn'].sendall(pack_message('END', 'You win!'))
-                    defender['conn'].sendall(pack_message('END', 'You lose.'))
+                    # Siapkan detail hasil
+                    winner = attacker
+                    loser = defender
+                    winner_name = winner['name']
+                    loser_name = loser['name']
+                    ships_winner = len(winner['ships'])
+                    ships_loser = len(loser['ships'])  # ini pasti 0
+
+                    # Subject dan body yang lebih informatif
+                    subject = f"{winner_name} won Battleship!"
+                    body = (
+                        "Game Result:\n"
+                        f"Winner: {winner_name}\n"
+                        f"Loser: {loser_name}\n"
+                        f"Remaining ships - {winner_name}: {ships_winner}, {loser_name}: {ships_loser}\n"
+                    )
+
+                    # Kirim email di thread terpisah
                     threading.Thread(
                         target=send_email,
-                        args=(f"{attacker['name']} won Battleship!",
-                              f"Player {attacker['name']} has won the game against {defender['name']}."),
+                        args=(subject, body),
                         daemon=True
                     ).start()
+
+                    # Kirim pesan akhir ke client
+                    attacker['conn'].sendall(pack_message('END', 'You win!'))
+                    defender['conn'].sendall(pack_message('END', 'You lose.'))
                     break
             else:
                 attacker['conn'].sendall(pack_message('MISS', coord))
                 defender['conn'].sendall(pack_message('INCOMING_MISS', coord))
+
             turn = 1 - turn
+
     except ProtocolError as e:
         print(f"Game protocol error: {e}")
         for p in players:
