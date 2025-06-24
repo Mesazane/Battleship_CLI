@@ -1,91 +1,111 @@
+import os
 import socket
-import struct
+import re
 from protocol import pack_message, unpack_message, ProtocolError
 
-def send_email(winner_name):
-    import os
-    import smtplib
-    from email.message import EmailMessage
-
-    EMAIL = os.getenv('BS_EMAIL')
-    PASS = os.getenv('BS_EMAIL_PASS')
-    TO = os.getenv('BS_NOTIFY_TO')
-
-    msg = EmailMessage()
-    msg.set_content(f"Player {winner_name} has won the Battleship game!")
-    msg['Subject'] = "🏴‍☠️ Battleship Victory 🏴‍☠️"
-    msg['From'] = EMAIL
-    msg['To'] = TO
-
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-        smtp.login(EMAIL, PASS)
-        smtp.send_message(msg)
+HOST = os.getenv('GAME_HOST', '127.0.0.1')
+PORT = int(os.getenv('GAME_PORT', '12345'))
+GRID = 8
 
 
-def print_board(board):
-    size = len(board)
-    header = '  ' + ' '.join(str(i) for i in range(size))
-    print(header)
-    for idx,row in enumerate(board):
-        print(f"{idx} " + ' '.join('X' if cell else '~' for cell in row))
+def input_coords(prompt):
+    """Accept input in 'A,1' or '1,A' format for an 8x8 grid."""
+    while True:
+        line = input(prompt).strip()
+        parts = [p.strip() for p in re.split(r'[ ,;]+', line)]
+        if len(parts) != 2:
+            print("Format 'A,1' atau '1,A'.")
+            continue
+        rstr, cstr = parts
+        if rstr.isalpha():
+            r = ord(rstr.upper()) - 65
+        else:
+            try:
+                r = int(rstr) - 1
+            except ValueError:
+                print("Baris A-H atau 1-8.")
+                continue
+        try:
+            c = int(cstr) - 1
+        except ValueError:
+            print("Kolom 1-8.")
+            continue
+        if 0 <= r < GRID and 0 <= c < GRID:
+            return r, c
+        print("Koordinat di luar A1-H8.")
 
 
 def main():
-    host = input("Server IP [default 127.0.0.1]: ").strip() or '127.0.0.1'
-    port = 9999
-    name = input("Your name: ").strip()
-    sock = socket.socket()
-    sock.connect((host, port))
-    sock.sendall(name.encode())
-
-    # initialize boards
-    own_hits = [[False]*5 for _ in range(5)]
-    opp_hits = [[False]*5 for _ in range(5)]
-
-    print("Waiting for another player to join...")
-
-    while True:
-        hdr = sock.recv(8)
-        if not hdr:
-            break
-        try:
-            msg_type, data = unpack_message(hdr + sock.recv(struct.unpack('!4sI', hdr)[1]))
-        except ProtocolError as e:
-            print("Protocol error:", e)
-            break
-
-        if msg_type == 'YOUR_TURN':
-            print("\nYour Board Hits:")
-            print_board(own_hits)
-            print("Opponent Board Hits:")
-            print_board(opp_hits)
-            # input attack
-            coords = input("Enter attack coord (row,col): ")
-            sock.sendall(pack_message('ATTACK', coords))
-
-        elif msg_type == 'RESULT':
-            res, r, c = data.split(',')
-            r, c = int(r), int(c)
-            own_hits[r][c] = (res == 'HIT')
-            print(f"You {'hit' if res=='HIT' else 'missed'} at {r},{c}")
-
-        elif msg_type == 'OPPONENT_MOVE':
-            res, r, c = data.split(',')
-            r, c = int(r), int(c)
-            opp_hits[r][c] = (res == 'HIT')
-            print(f"Opponent {'hit' if res=='HIT' else 'missed'} your ship at {r},{c}")
-
-        elif msg_type == 'GAME_OVER':
-            winner = data
-            print(f"\nGame Over! Winner: {winner}")
-            if winner == name:
-                send_email(name)
-            break
-
-        else:
+    """Run the client: join, place ships, then play turn-based Battleship."""
+    name = input("Enter your name: ").strip()
+    ships = []
+    print("Place 3 ships:")
+    while len(ships) < 3:
+        r, c = input_coords(f"Ship {len(ships)+1}: ")
+        if (r, c) in ships:
+            print("Sudah ada kapal di situ.")
             continue
+        ships.append((r, c))
 
-    sock.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.connect((HOST, PORT))
+        except Exception as e:
+            print(f"Connection error: {e}")
+            return
+        try:
+            s.sendall(pack_message('JOIN', name))
+            # WAIT for PLACE prompt
+            msg, info = unpack_message(s)
+            if msg != 'PLACE':
+                print(f"Unexpected server message: {msg} {info}")
+                return
+            # send placement
+            placements = ';'.join(f"{r},{c}" for r, c in ships)
+            s.sendall(pack_message('PLACED', placements))
+
+            # WAIT or READY
+            msg, info = unpack_message(s)
+            if msg == 'WAIT':
+                print(info)
+                msg, info = unpack_message(s)
+            if msg != 'READY':
+                print(f"Unexpected server message: {msg} {info}")
+                return
+            print(f"Game start! Opponent: {info}")
+
+            # Game loop
+            while True:
+                msg, data = unpack_message(s)
+                if msg == 'YOUR_TURN':
+                    r, c = input_coords("Your move: ")
+                    s.sendall(pack_message('FIRE', f"{r},{c}"))
+                elif msg == 'HIT':
+                    r, c = map(int, data.split(','))
+                    print(f"Hit at {chr(r+65)}{c+1}!")
+                elif msg == 'MISS':
+                    r, c = map(int, data.split(','))
+                    print(f"Miss at {chr(r+65)}{c+1}.")
+                elif msg == 'INCOMING_HIT':
+                    r, c = map(int, data.split(','))
+                    print(f"Opponent hit at {chr(r+65)}{c+1}!")
+                elif msg == 'INCOMING_MISS':
+                    r, c = map(int, data.split(','))
+                    print(f"Opponent miss at {chr(r+65)}{c+1}.")
+                elif msg == 'END':
+                    print(data)
+                    break
+                elif msg == 'ERROR':
+                    print(f"Server error: {data}")
+                    break
+                else:
+                    print(f"Unknown message: {msg} {data}")
+        except ProtocolError as e:
+            print(f"Protocol error: {e}")
+        except ConnectionError:
+            print("Connection lost.")
+        except Exception as e:
+            print(f"Unexpected client error: {e}")
 
 if __name__ == '__main__':
     main()

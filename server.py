@@ -1,128 +1,162 @@
+import os
 import socket
 import threading
-import struct
-from protocol import pack_message, unpack_message, ProtocolError
+import smtplib
+import ssl
+from email.message import EmailMessage
+from protocol import recv_all, pack_message, unpack_message, ProtocolError
 
 HOST = '0.0.0.0'
-PORT = 9999
-GRID_SIZE = 5
-SHIP_SIZES = [3, 2]  # two ships: length 3 and 2
+PORT = 12345
+lobby = []  # list of dicts: {'conn', 'name', 'ships'}
+lobby_lock = threading.Lock()
 
-class Game:
-    def __init__(self, players):
-        self.players = players  # list of (conn, name)
-        self.boards = {name: [[False]*GRID_SIZE for _ in range(GRID_SIZE)]
-                       for _, name in players}
-        self.hits = {name: [[False]*GRID_SIZE for _ in range(GRID_SIZE)]
-                     for _, name in players}
-        self.turn = 0  # index in players
-        self.place_all_ships()
+# Email configuration from environment variables
+EMAIL_HOST = os.getenv('EMAIL_HOST')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '465'))
+EMAIL_USER = os.getenv('EMAIL_USER')
+EMAIL_PASS = os.getenv('EMAIL_PASS')
+EMAIL_RECEIVER = os.getenv('EMAIL_RECEIVER')
 
-    def place_all_ships(self):
-        # For simplicity: server randomly places ships for each player
-        import random
-        for conn, name in self.players:
-            coords = []
-            for size in SHIP_SIZES:
-                placed = False
-                while not placed:
-                    orientation = random.choice(['H','V'])
-                    if orientation=='H':
-                        row = random.randrange(GRID_SIZE)
-                        col = random.randrange(GRID_SIZE-size+1)
-                        ship_coords = [(row, col+i) for i in range(size)]
-                    else:
-                        row = random.randrange(GRID_SIZE-size+1)
-                        col = random.randrange(GRID_SIZE)
-                        ship_coords = [(row+i, col) for i in range(size)]
-                    # check overlap
-                    if all(not self.boards[name][r][c] for r,c in ship_coords):
-                        for r,c in ship_coords:
-                            self.boards[name][r][c] = True
-                        placed = True
-
-    def broadcast(self, msg_type, data):
-        for conn, _ in self.players:
-            conn.sendall(pack_message(msg_type, data))
-
-    def other(self, idx):
-        return (idx + 1) % len(self.players)
-
-    def all_sunk(self, name):
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE):
-                if self.boards[name][r][c] and not self.hits[name][r][c]:
-                    return False
-        return True
-
-    def handle(self):
-        while True:
-            conn, name = self.players[self.turn]
-            try:
-                # ask for attack
-                conn.sendall(pack_message('YOUR_TURN', ''))
-                # receive attack
-                hdr = conn.recv(8)
-                if not hdr:
-                    break
-                _, length = struct.unpack('!4sI', hdr)
-                body = conn.recv(length)
-                msg_type, data = unpack_message(hdr+body)
-                if msg_type != 'ATTACK':
-                    continue
-                row, col = map(int, data.split(','))
-                opp_idx = self.other(self.turn)
-                _, opp_name = self.players[opp_idx]
-                hit = self.boards[opp_name][row][col]
-                self.hits[opp_name][row][col] = True
-                result = 'HIT' if hit else 'MISS'
-                # notify both
-                conn.sendall(pack_message('RESULT', f"{result},{row},{col}"))
-                oconn, _ = self.players[opp_idx]
-                oconn.sendall(pack_message('OPPONENT_MOVE', f"{result},{row},{col}"))
-                # check win
-                if self.all_sunk(opp_name):
-                    self.broadcast('GAME_OVER', name)
-                    break
-                # next turn
-                self.turn = opp_idx
-            except Exception as e:
-                print(f"[!] Error in game: {e}")
-                break
-        # close connections
-        for conn,_ in self.players:
-            conn.close()
-
-
-def handle_client(conn, addr, waiting):
+def send_email(subject: str, body: str):
+    """Send an email notification using SMTP SSL."""
+    if not all([EMAIL_HOST, EMAIL_USER, EMAIL_PASS, EMAIL_RECEIVER]):
+        print("Email config incomplete, skipping email.")
+        return
     try:
-        # get player name
-        name = conn.recv(1024).decode().strip()
-        print(f"Connected: {name} @ {addr}")
-        waiting.append((conn, name))
-        if len(waiting) == 2:
-            game = Game(waiting.copy())
-            threading.Thread(target=game.handle, daemon=True).start()
-            waiting.clear()
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = EMAIL_USER
+        msg['To'] = EMAIL_RECEIVER
+        msg.set_content(body)
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT, context=context) as server:
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
+        print(f"Email sent: {subject}")
     except Exception as e:
-        print(f"[!] Client error: {e}")
+        print(f"Failed to send email: {e}")
+
+
+def handle_client(conn: socket.socket, addr):
+    """Handle a new client connection: join, place ships, then wait for game pairing."""
+    try:
+        msg, name = unpack_message(conn)
+        if msg != 'JOIN':
+            conn.sendall(pack_message('ERROR', 'Expected JOIN'))
+            conn.close()
+            return
+        # Ask for ship placement
+        conn.sendall(pack_message('PLACE', 'Place your 3 ships (A-H,1-8)'))
+        msg, data = unpack_message(conn)
+        if msg != 'PLACED':
+            conn.sendall(pack_message('ERROR', 'Expected PLACED'))
+            conn.close()
+            return
+        ships = [tuple(map(int, p.split(','))) for p in data.split(';')]
+        with lobby_lock:
+            lobby.append({'conn': conn, 'name': name, 'ships': ships})
+            if len(lobby) < 2:
+                conn.sendall(pack_message('WAIT', 'Waiting for opponent...'))
+        # Wait until two players ready
+        while True:
+            with lobby_lock:
+                if len(lobby) >= 2:
+                    p1 = lobby.pop(0)
+                    p2 = lobby.pop(0)
+                    break
+        threading.Thread(target=game_thread, args=(p1, p2), daemon=True).start()
+    except ProtocolError as e:
+        print(f"[{addr}] Protocol error: {e}")
+        try:
+            conn.sendall(pack_message('ERROR', str(e)))
+        except:
+            pass
+        conn.close()
+    except ConnectionError:
+        print(f"[{addr}] Connection closed unexpectedly.")
+        conn.close()
+    except Exception as e:
+        print(f"[{addr}] Unexpected error: {e}")
         conn.close()
 
 
-def main():
-    waiting = []
-    sock = socket.socket()
-    sock.bind((HOST, PORT))
-    sock.listen()
-    print(f"Server listening on {HOST}:{PORT}")
+def game_thread(p1: dict, p2: dict):
+    """Run the main game loop for two players."""
+    players = [p1, p2]
+    # Notify both that game is ready
+    for p in players:
+        opp = p2 if p is p1 else p1
+        try:
+            p['conn'].sendall(pack_message('READY', opp['name']))
+        except Exception as e:
+            print(f"Error sending READY to {p['name']}: {e}")
+            return
+    turn = 0
     try:
         while True:
-            conn, addr = sock.accept()
-            threading.Thread(target=handle_client, args=(conn, addr, waiting), daemon=True).start()
-    except KeyboardInterrupt:
-        print("Shutting down server.")
+            attacker = players[turn]
+            defender = players[1 - turn]
+            # Prompt attacker for move
+            attacker['conn'].sendall(pack_message('YOUR_TURN', 'Your move'))
+            msg, coord = unpack_message(attacker['conn'])
+            if msg != 'FIRE':
+                raise ProtocolError('Expected FIRE')
+            r, c = map(int, coord.split(','))
+            hit = (r, c) in defender['ships']
+            if hit:
+                defender['ships'].remove((r, c))
+                attacker['conn'].sendall(pack_message('HIT', coord))
+                defender['conn'].sendall(pack_message('INCOMING_HIT', coord))
+                if not defender['ships']:
+                    attacker['conn'].sendall(pack_message('END', 'You win!'))
+                    defender['conn'].sendall(pack_message('END', 'You lose.'))
+                    threading.Thread(
+                        target=send_email,
+                        args=(f"{attacker['name']} won Battleship!",
+                              f"Player {attacker['name']} has won the game against {defender['name']}."),
+                        daemon=True
+                    ).start()
+                    break
+            else:
+                attacker['conn'].sendall(pack_message('MISS', coord))
+                defender['conn'].sendall(pack_message('INCOMING_MISS', coord))
+            turn = 1 - turn
+    except ProtocolError as e:
+        print(f"Game protocol error: {e}")
+        for p in players:
+            try:
+                p['conn'].sendall(pack_message('ERROR', str(e)))
+            except:
+                pass
+    except ConnectionError:
+        print("Game connection lost unexpectedly.")
+    except Exception as e:
+        print(f"Unexpected game error: {e}")
     finally:
-        sock.close()
+        for p in players:
+            try:
+                p['conn'].close()
+            except:
+                pass
+
+
+def main():
+    """Start the server and listen for client connections."""
+    print(f"Server listening on {HOST}:{PORT}")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((HOST, PORT))
+        s.listen()
+        while True:
+            try:
+                conn, addr = s.accept()
+                threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
+            except KeyboardInterrupt:
+                print("Server shutting down.")
+                break
+            except Exception as e:
+                print(f"Accept error: {e}")
 
 if __name__ == '__main__':
     main()

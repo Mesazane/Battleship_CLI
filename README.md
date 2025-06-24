@@ -29,6 +29,13 @@ deserialization, manage network connections, and handle game state synchronizati
     export BS_EMAIL_PASS=your_app_password
     export BS_NOTIFY_TO=notify@example.com
     ```
+    Jika di Windows, gunakan yang dibawah :
+    ```PowerShell
+    $Env:EMAIL_USER      = "sender@example.com"
+    $Env:EMAIL_HOST      = "www.mail.com"
+    $Env:EMAIL_PORT      = "465"
+    $Env:EMAIL_RECEIVER  = "you@example.com"
+    ```
 2. ```bash
     python3 server.py
     ```
