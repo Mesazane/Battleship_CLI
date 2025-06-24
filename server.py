@@ -111,9 +111,9 @@ def game_thread(p1: dict, p2: dict):
                 attacker['conn'].sendall(pack_message('HIT', coord))
                 defender['conn'].sendall(pack_message('INCOMING_HIT', coord))
 
-                # Jika permainan berakhir
+                # If game is over
                 if not defender['ships']:
-                    # Siapkan detail hasil
+                    # Prepare game result
                     winner = attacker
                     loser = defender
                     winner_name = winner['name']
@@ -121,7 +121,7 @@ def game_thread(p1: dict, p2: dict):
                     ships_winner = len(winner['ships'])
                     ships_loser = len(loser['ships'])  # ini pasti 0
 
-                    # Subject dan body yang lebih informatif
+                    # Create Subject and body that is informative
                     subject = f"{winner_name} won Battleship!"
                     body = (
                         "Game Result:\n"
@@ -130,14 +130,14 @@ def game_thread(p1: dict, p2: dict):
                         f"Remaining ships - {winner_name}: {ships_winner}, {loser_name}: {ships_loser}\n"
                     )
 
-                    # Kirim email di thread terpisah
+                    # Send email on separate thread
                     threading.Thread(
                         target=send_email,
                         args=(subject, body),
                         daemon=True
                     ).start()
 
-                    # Kirim pesan akhir ke client
+                    # Send end game messages
                     attacker['conn'].sendall(pack_message('END', 'You win!'))
                     defender['conn'].sendall(pack_message('END', 'You lose.'))
                     break
