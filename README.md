@@ -25,9 +25,11 @@ deserialization, manage network connections, and handle game state synchronizati
 ## **🚀 How to Run**
 1. Set environment variables untuk email notifikasi:
     ```bash
-    export BS_EMAIL=you@example.com
-    export BS_EMAIL_PASS=your_app_password
-    export BS_NOTIFY_TO=notify@example.com
+    export EMAIL_HOST="smtp.gmail.com"
+    export EMAIL_PORT="465"
+    export EMAIL_USER="your.address@gmail.com"
+    export EMAIL_PASS="your_app_password"
+    export EMAIL_RECEIVER="notify.to@example.com"
     ```
     Jika di Windows, gunakan yang dibawah :
     ```PowerShell
