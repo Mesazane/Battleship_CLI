@@ -23,22 +23,8 @@ deserialization, manage network connections, and handle game state synchronizati
 </table> 
 
 ## **🚀 How to Run**
-1. Set environment variables untuk email notifikasi:
-    ```bash
-    export EMAIL_HOST="smtp.gmail.com"
-    export EMAIL_PORT="465"
-    export EMAIL_USER="your.address@gmail.com"
-    export EMAIL_PASS="your_app_password"
-    export EMAIL_RECEIVER="notify.to@example.com"
-    ```
-    Jika di Windows, gunakan yang dibawah :
-    ```PowerShell
-    $Env:EMAIL_USER      = "sender@example.com"
-    $Env:EMAIL_HOST      = "www.mail.com"
-    $Env:EMAIL_PORT      = "465"
-    $Env:EMAIL_RECEIVER  = "you@example.com"
-    ```
-2. ```bash
+1. Run di terminal :
+  ```bash
     python3 server.py
     ```
 3. Jalankan dua client di terminal terpisah:

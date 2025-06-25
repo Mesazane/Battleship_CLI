@@ -3,23 +3,24 @@ import socket
 import threading
 import smtplib
 import ssl
+import getpass
 from email.message import EmailMessage
 from protocol import recv_all, pack_message, unpack_message, ProtocolError
 
 HOST = '0.0.0.0'
 PORT = 12345
-lobby = []  # list of dicts: {'conn', 'name', 'ships'}
+lobby = []
 lobby_lock = threading.Lock()
 
-# Email configuration from environment variables
-EMAIL_HOST = os.getenv('EMAIL_HOST')
-EMAIL_PORT = int(os.getenv('EMAIL_PORT', '465'))
-EMAIL_USER = os.getenv('EMAIL_USER')
-EMAIL_PASS = os.getenv('EMAIL_PASS')
-EMAIL_RECEIVER = os.getenv('EMAIL_RECEIVER')
+
+EMAIL_HOST = os.getenv('EMAIL_HOST') or input("SMTP server (e.g. smtp.gmail.com): ")
+EMAIL_PORT = int(os.getenv('EMAIL_PORT') or input("SMTP port (e.g. 465): "))
+EMAIL_USER = os.getenv('EMAIL_USER') or input("Sender email: ")
+EMAIL_PASS = os.getenv('EMAIL_PASS') or getpass.getpass(f"Password for {EMAIL_USER}: ")
+EMAIL_RECEIVER = os.getenv('EMAIL_RECEIVER') or input("Receiver email: ")
+
 
 def send_email(subject: str, body: str):
-    """Send an email notification using SMTP SSL."""
     if not all([EMAIL_HOST, EMAIL_USER, EMAIL_PASS, EMAIL_RECEIVER]):
         print("Email config incomplete, skipping email.")
         return
@@ -29,36 +30,36 @@ def send_email(subject: str, body: str):
         msg['From'] = EMAIL_USER
         msg['To'] = EMAIL_RECEIVER
         msg.set_content(body)
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT, context=context) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(EMAIL_HOST, EMAIL_PORT, context=ctx) as smtp:
+            smtp.login(EMAIL_USER, EMAIL_PASS)
+            smtp.send_message(msg)
         print(f"Email sent: {subject}")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
-
 def handle_client(conn: socket.socket, addr):
-    """Handle a new client connection: join, place ships, then wait for game pairing."""
     try:
+        # 1) JOIN
         msg, name = unpack_message(conn)
         if msg != 'JOIN':
             conn.sendall(pack_message('ERROR', 'Expected JOIN'))
-            conn.close()
             return
-        # Ask for ship placement
+        # 2) PLACE
         conn.sendall(pack_message('PLACE', 'Place your 3 ships (A-H,1-8)'))
         msg, data = unpack_message(conn)
         if msg != 'PLACED':
             conn.sendall(pack_message('ERROR', 'Expected PLACED'))
-            conn.close()
             return
         ships = [tuple(map(int, p.split(','))) for p in data.split(';')]
+
+        # 3) Entering lobby
         with lobby_lock:
             lobby.append({'conn': conn, 'name': name, 'ships': ships})
             if len(lobby) < 2:
-                conn.sendall(pack_message('WAIT', 'Waiting for opponent...'))
-        # Wait until two players ready
+                conn.sendall(pack_message('WAIT', 'Waiting for opponent…'))
+
+        # 4) Pairing
         while True:
             with lobby_lock:
                 if len(lobby) >= 2:
@@ -66,122 +67,85 @@ def handle_client(conn: socket.socket, addr):
                     p2 = lobby.pop(0)
                     break
         threading.Thread(target=game_thread, args=(p1, p2), daemon=True).start()
+
     except ProtocolError as e:
-        print(f"[{addr}] Protocol error: {e}")
-        try:
-            conn.sendall(pack_message('ERROR', str(e)))
-        except:
-            pass
-        conn.close()
+        conn.sendall(pack_message('ERROR', str(e)))
     except ConnectionError:
         print(f"[{addr}] Connection closed unexpectedly.")
-        conn.close()
-    except Exception as e:
-        print(f"[{addr}] Unexpected error: {e}")
-        conn.close()
+    finally:
+        pass
 
-
-def game_thread(p1: dict, p2: dict):
-    """Run the main game loop for two players."""
+def game_thread(p1, p2):
     players = [p1, p2]
-    # Notify both that game is ready
+    # Send READY signal to both players
     for p in players:
         opp = p2 if p is p1 else p1
-        try:
-            p['conn'].sendall(pack_message('READY', opp['name']))
-        except Exception as e:
-            print(f"Error sending READY to {p['name']}: {e}")
-            return
+        p['conn'].sendall(pack_message('READY', opp['name']))
 
     turn = 0
     try:
         while True:
-            attacker = players[turn]
-            defender = players[1 - turn]
-            # Prompt attacker for move
-            attacker['conn'].sendall(pack_message('YOUR_TURN', 'Your move'))
-            msg, coord = unpack_message(attacker['conn'])
+            atk = players[turn]
+            defn = players[1 - turn]
+
+            # Trun to Attack
+            atk['conn'].sendall(pack_message('YOUR_TURN', 'Your move'))
+            msg, coord = unpack_message(atk['conn'])
             if msg != 'FIRE':
                 raise ProtocolError('Expected FIRE')
             r, c = map(int, coord.split(','))
-            hit = (r, c) in defender['ships']
+            hit = (r, c) in defn['ships']
 
             if hit:
-                defender['ships'].remove((r, c))
-                attacker['conn'].sendall(pack_message('HIT', coord))
-                defender['conn'].sendall(pack_message('INCOMING_HIT', coord))
+                defn['ships'].remove((r, c))
+                atk['conn'].sendall(pack_message('HIT', coord))
+                defn['conn'].sendall(pack_message('INCOMING_HIT', coord))
 
-                # If game is over
-                if not defender['ships']:
-                    # Prepare game result
-                    winner = attacker
-                    loser = defender
-                    winner_name = winner['name']
-                    loser_name = loser['name']
-                    ships_winner = len(winner['ships'])
-                    ships_loser = len(loser['ships'])  # ini pasti 0
-
-                    # Create Subject and body that is informative
-                    subject = f"{winner_name} won Battleship!"
+                # Win check
+                if not defn['ships']:
+                    winner = atk; loser = defn
+                    # Subject + body
+                    subject = f"🎉 Congrats! You've won a game of Battleship!"
                     body = (
-                        "Game Result:\n"
-                        f"Winner: {winner_name}\n"
-                        f"Loser: {loser_name}\n"
-                        f"Remaining ships - {winner_name}: {ships_winner}, {loser_name}: {ships_loser}\n"
+                        f"Selamat {winner['name']}! You've won a game of Battleship!\n"
+                        f"Winner: {winner['name']}\n"
+                        f"Loser: {loser['name']}\n"
                     )
-
-                    # Send email on separate thread
                     threading.Thread(
                         target=send_email,
                         args=(subject, body),
                         daemon=True
                     ).start()
 
-                    # Send end game messages
-                    attacker['conn'].sendall(pack_message('END', 'You win!'))
-                    defender['conn'].sendall(pack_message('END', 'You lose.'))
+                    # Send END message
+                    winner['conn'].sendall(pack_message('END', 'You win!'))
+                    loser['conn'].sendall(pack_message('END', 'You lose.'))
                     break
             else:
-                attacker['conn'].sendall(pack_message('MISS', coord))
-                defender['conn'].sendall(pack_message('INCOMING_MISS', coord))
+                atk['conn'].sendall(pack_message('MISS', coord))
+                defn['conn'].sendall(pack_message('INCOMING_MISS', coord))
 
             turn = 1 - turn
 
     except ProtocolError as e:
-        print(f"Game protocol error: {e}")
         for p in players:
-            try:
-                p['conn'].sendall(pack_message('ERROR', str(e)))
-            except:
-                pass
+            p['conn'].sendall(pack_message('ERROR', str(e)))
     except ConnectionError:
         print("Game connection lost unexpectedly.")
-    except Exception as e:
-        print(f"Unexpected game error: {e}")
     finally:
         for p in players:
-            try:
-                p['conn'].close()
-            except:
-                pass
-
+            p['conn'].close()
 
 def main():
-    """Start the server and listen for client connections."""
     print(f"Server listening on {HOST}:{PORT}")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    with socket.socket() as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
         while True:
-            try:
-                conn, addr = s.accept()
-                threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
-            except KeyboardInterrupt:
-                print("Server shutting down.")
-                break
-            except Exception as e:
-                print(f"Accept error: {e}")
+            conn, addr = s.accept()
+            print(f"Connection from {addr}")
+            threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
 
 if __name__ == '__main__':
     main()
