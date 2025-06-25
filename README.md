@@ -10,6 +10,18 @@ communication. The game can be implemented with either a GUI or terminal interfa
 project will showcase your ability to design communication protocols, implement serialization/
 deserialization, manage network connections, and handle game state synchronization.
 
+## **🧑‍🎓 Student Info**
+<table>
+  <tr>
+    <td>Name</td>
+    <td>Muhammad Farrel Fathin Wibowo</td>
+  </tr>
+  <tr>
+    <td>NRP</td>
+    <td>5025231233</td>
+  </tr>
+</table> 
+
 ## **🚀 How to Run**
 1. Set environment variables untuk email notifikasi:
     ```bash
@@ -40,7 +52,7 @@ deserialization, manage network connections, and handle game state synchronizati
 <table>
   <tr>
     <td>YouTube link</td>
-    <td>..........</td>
+    <td>https://www.youtube.com/watch?v=UcnChqnDeMY</td>
   </tr>
 </table> 
   </tr>
