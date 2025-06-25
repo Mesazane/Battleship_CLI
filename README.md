@@ -24,10 +24,11 @@ deserialization, manage network connections, and handle game state synchronizati
 
 ## **🚀 How to Run**
 1. Run di terminal :
-  ```bash
+    ```bash
     python3 server.py
     ```
-3. Jalankan dua client di terminal terpisah:
+
+2. Jalankan dua client di terminal terpisah:
     ```bash
     python3 client.py
     ```
