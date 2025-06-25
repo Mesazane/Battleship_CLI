@@ -39,7 +39,7 @@ deserialization, manage network connections, and handle game state synchronizati
 <table>
   <tr>
     <td>YouTube link</td>
-    <td>https://www.youtube.com/watch?v=UcnChqnDeMY</td>
+    <td>https://www.youtube.com/watch?v=xsuKUFZ49Ks</td>
   </tr>
 </table> 
   </tr>
