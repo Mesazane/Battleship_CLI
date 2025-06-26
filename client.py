@@ -14,7 +14,7 @@ def input_coords(prompt):
         line = input(prompt).strip()
         parts = [p.strip() for p in re.split(r'[ ,;]+', line)]
         if len(parts) != 2:
-            print("Format 'A,1' atau '1,A'.")
+            print("Format 'A,1' or '1,A'.")
             continue
         rstr, cstr = parts
         if rstr.isalpha():
@@ -23,7 +23,7 @@ def input_coords(prompt):
             try:
                 r = int(rstr) - 1
             except ValueError:
-                print("Baris A-H atau 1-8.")
+                print("Row A-H or 1-8.")
                 continue
         try:
             c = int(cstr) - 1
@@ -32,7 +32,7 @@ def input_coords(prompt):
             continue
         if 0 <= r < GRID and 0 <= c < GRID:
             return r, c
-        print("Koordinat di luar A1-H8.")
+        print("Coordinates are outside the range of A1-H8.")
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
     while len(ships) < 3:
         r, c = input_coords(f"Ship {len(ships)+1}: ")
         if (r, c) in ships:
-            print("Sudah ada kapal di situ.")
+            print("Unable to place ship, There's another ship already located in that location.")
             continue
         ships.append((r, c))
 
